@@ -1,12 +1,14 @@
 /*!
     \file matching_engine.cpp
-    \brief Matching engine example
+    \brief Matching engine example with security hardening
     \author Ivan Shynkarenka
     \date 16.08.2017
     \copyright MIT License
 */
 
 #include "trader/matching/market_manager.h"
+#include "common/safe_market_manager.h"
+#include "common/validator.h"
 
 #include "system/stream.h"
 
@@ -15,6 +17,7 @@
 #include <string>
 
 using namespace CppTrader::Matching;
+using namespace CppTrader::App;
 
 class MyMarketHandler : public MarketHandler
 {
@@ -49,546 +52,896 @@ protected:
     { std::cout << "Execute order: " << order << " with price " << price << " and quantity " << quantity << std::endl; }
 };
 
-void AddSymbol(MarketManager& market, const std::string& command)
+void AddSymbol(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add symbol (\\d+) (.+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint32_t id = std::stoi(match[1]);
+        try {
+            // Validate and parse symbol ID with bounds checking
+            long long id_ll = std::stoll(match[1]);
+            if (id_ll < 0 || id_ll > static_cast<long long>(Validator::MAX_SYMBOL_ID)) {
+                std::cerr << "[SECURITY] Symbol ID out of allowed range: " << id_ll << std::endl;
+                return;
+            }
+            uint32_t id = static_cast<uint32_t>(id_ll);
 
-        char name[8];
-        std::string sname = match[2];
-        std::memcpy(name, sname.data(), std::min(sname.size(), sizeof(name)));
+            // Validate input line length
+            std::string sname = match[2];
+            if (sname.length() > 8) {
+                std::cerr << "[SECURITY] Symbol name exceeds maximum length (8 characters)" << std::endl;
+                return;
+            }
 
-        Symbol symbol(id, name);
+            char name[8];
+            std::memcpy(name, sname.data(), sname.size());
+            // Pad remaining bytes with spaces for safety
+            if (sname.size() < 8) {
+                std::memset(name + sname.size(), ' ', 8 - sname.size());
+            }
 
-        ErrorCode result = market.AddSymbol(symbol);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add symbol' command: " << result << std::endl;
+            Symbol symbol(id, name);
 
+            ErrorCode result = market.SafeAddSymbol(symbol);
+            if (result != ErrorCode::OK)
+                std::cerr << "Failed 'add symbol' command: " << result << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Symbol ID value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add symbol' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'add symbol' command: " << command << std::endl;
 }
 
-void DeleteSymbol(MarketManager& market, const std::string& command)
+void DeleteSymbol(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^delete symbol (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint32_t id = std::stoi(match[1]);
+        try {
+            long long id_ll = std::stoll(match[1]);
+            if (id_ll < 0 || id_ll > static_cast<long long>(Validator::MAX_SYMBOL_ID)) {
+                std::cerr << "[SECURITY] Symbol ID out of allowed range: " << id_ll << std::endl;
+                return;
+            }
+            uint32_t id = static_cast<uint32_t>(id_ll);
 
-        ErrorCode result = market.DeleteSymbol(id);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'delete symbol' command: " << result << std::endl;
+            ErrorCode result = market.SafeDeleteSymbol(id);
+            if (result != ErrorCode::OK)
+                std::cerr << "Failed 'delete symbol' command: " << result << std::endl;
 
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Symbol ID value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'delete symbol' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'delete symbol' command: " << command << std::endl;
 }
 
-void AddOrderBook(MarketManager& market, const std::string& command)
+void AddOrderBook(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add book (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint32_t id = std::stoi(match[1]);
+        try {
+            long long id_ll = std::stoll(match[1]);
+            if (id_ll < 0 || id_ll > static_cast<long long>(Validator::MAX_ORDER_BOOK_ID)) {
+                std::cerr << "[SECURITY] Order book ID out of allowed range: " << id_ll << std::endl;
+                return;
+            }
+            uint32_t id = static_cast<uint32_t>(id_ll);
 
-        char name[8];
-        std::memset(name, 0, sizeof(name));
+            char name[8];
+            std::memset(name, ' ', sizeof(name));  // Pad with spaces
 
-        Symbol symbol(id, name);
+            OrderBook order_book(id, id);  // Using id as symbol_id for simplicity
 
-        ErrorCode result = market.AddOrderBook(symbol);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add book' command: " << result << std::endl;
+            ErrorCode result = market.SafeAddOrderBook(order_book);
+            if (result != ErrorCode::OK)
+                std::cerr << "Failed 'add book' command: " << result << std::endl;
 
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order book ID value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add book' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'add book' command: " << command << std::endl;
 }
 
-void DeleteOrderBook(MarketManager& market, const std::string& command)
+void DeleteOrderBook(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^delete book (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint32_t id = std::stoi(match[1]);
+        try {
+            long long id_ll = std::stoll(match[1]);
+            if (id_ll < 0 || id_ll > static_cast<long long>(Validator::MAX_ORDER_BOOK_ID)) {
+                std::cerr << "[SECURITY] Order book ID out of allowed range: " << id_ll << std::endl;
+                return;
+            }
+            uint32_t id = static_cast<uint32_t>(id_ll);
 
-        ErrorCode result = market.DeleteOrderBook(id);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'delete book' command: " << result << std::endl;
+            ErrorCode result = market.SafeDeleteOrderBook(id);
+            if (result != ErrorCode::OK)
+                std::cerr << "Failed 'delete book' command: " << result << std::endl;
 
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order book ID value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'delete book' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'delete book' command: " << command << std::endl;
 }
 
-void AddMarketOrder(MarketManager& market, const std::string& command)
+void AddMarketOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add market (buy|sell) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t quantity = std::stoi(match[4]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t quantity = std::stoull(match[4]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyMarket(id, symbol_id, quantity);
-        else if (match[1] == "sell")
-            order = Order::SellMarket(id, symbol_id, quantity);
-        else
-        {
-            std::cerr << "Invalid market order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyMarket(id, symbol_id, quantity);
+            else if (match[1] == "sell")
+                order = Order::SellMarket(id, symbol_id, quantity);
+            else
+            {
+                std::cerr << "Invalid market order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add market' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add market' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add market' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add market' command: " << command << std::endl;
 }
 
-void AddSlippageMarketOrder(MarketManager& market, const std::string& command)
+void AddSlippageMarketOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add slippage market (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t quantity = std::stoi(match[4]);
-        uint64_t slippage = std::stoi(match[5]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t quantity = std::stoull(match[4]);
+            uint64_t slippage = std::stoull(match[5]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyMarket(id, symbol_id, quantity, slippage);
-        else if (match[1] == "sell")
-            order = Order::SellMarket(id, symbol_id, quantity, slippage);
-        else
-        {
-            std::cerr << "Invalid market order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+            
+            result = Validator::ValidateSlippage(slippage);
+            if (!result) { std::cerr << "[SECURITY] Invalid slippage: " << slippage << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyMarket(id, symbol_id, quantity, slippage);
+            else if (match[1] == "sell")
+                order = Order::SellMarket(id, symbol_id, quantity, slippage);
+            else
+            {
+                std::cerr << "Invalid market order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add slippage market' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add slippage market' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add slippage market' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add slippage market' command: " << command << std::endl;
 }
 
-void AddLimitOrder(MarketManager& market, const std::string& command)
+void AddLimitOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add limit (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t price = std::stoi(match[4]);
-        uint64_t quantity = std::stoi(match[5]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t price = std::stoull(match[4]);
+            uint64_t quantity = std::stoull(match[5]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyLimit(id, symbol_id, price, quantity);
-        else if (match[1] == "sell")
-            order = Order::SellLimit(id, symbol_id, price, quantity);
-        else
-        {
-            std::cerr << "Invalid limit order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyLimit(id, symbol_id, price, quantity);
+            else if (match[1] == "sell")
+                order = Order::SellLimit(id, symbol_id, price, quantity);
+            else
+            {
+                std::cerr << "Invalid limit order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add limit' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add limit' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add limit' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add limit' command: " << command << std::endl;
 }
 
-void AddIOCLimitOrder(MarketManager& market, const std::string& command)
+void AddIOCLimitOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add ioc limit (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t price = std::stoi(match[4]);
-        uint64_t quantity = std::stoi(match[5]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t price = std::stoull(match[4]);
+            uint64_t quantity = std::stoull(match[5]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyLimit(id, symbol_id, price, quantity, OrderTimeInForce::IOC);
-        else if (match[1] == "sell")
-            order = Order::SellLimit(id, symbol_id, price, quantity, OrderTimeInForce::IOC);
-        else
-        {
-            std::cerr << "Invalid limit order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyLimit(id, symbol_id, price, quantity, OrderTimeInForce::IOC);
+            else if (match[1] == "sell")
+                order = Order::SellLimit(id, symbol_id, price, quantity, OrderTimeInForce::IOC);
+            else
+            {
+                std::cerr << "Invalid limit order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add ioc limit' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add ioc limit' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add ioc limit' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add ioc limit' command: " << command << std::endl;
 }
 
-void AddFOKLimitOrder(MarketManager& market, const std::string& command)
+void AddFOKLimitOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add fok limit (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t price = std::stoi(match[4]);
-        uint64_t quantity = std::stoi(match[5]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t price = std::stoull(match[4]);
+            uint64_t quantity = std::stoull(match[5]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyLimit(id, symbol_id, price, quantity, OrderTimeInForce::FOK);
-        else if (match[1] == "sell")
-            order = Order::SellLimit(id, symbol_id, price, quantity, OrderTimeInForce::FOK);
-        else
-        {
-            std::cerr << "Invalid limit order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyLimit(id, symbol_id, price, quantity, OrderTimeInForce::FOK);
+            else if (match[1] == "sell")
+                order = Order::SellLimit(id, symbol_id, price, quantity, OrderTimeInForce::FOK);
+            else
+            {
+                std::cerr << "Invalid limit order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add fok limit' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add fok limit' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add fok limit' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add fok limit' command: " << command << std::endl;
 }
 
-void AddAONLimitOrder(MarketManager& market, const std::string& command)
+void AddAONLimitOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add aon limit (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t price = std::stoi(match[4]);
-        uint64_t quantity = std::stoi(match[5]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t price = std::stoull(match[4]);
+            uint64_t quantity = std::stoull(match[5]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyLimit(id, symbol_id, price, quantity, OrderTimeInForce::AON);
-        else if (match[1] == "sell")
-            order = Order::SellLimit(id, symbol_id, price, quantity, OrderTimeInForce::AON);
-        else
-        {
-            std::cerr << "Invalid limit order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyLimit(id, symbol_id, price, quantity, OrderTimeInForce::AON);
+            else if (match[1] == "sell")
+                order = Order::SellLimit(id, symbol_id, price, quantity, OrderTimeInForce::AON);
+            else
+            {
+                std::cerr << "Invalid limit order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add aon limit' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add aon limit' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add aon limit' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add aon limit' command: " << command << std::endl;
 }
 
-void AddStopOrder(MarketManager& market, const std::string& command)
+void AddStopOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add stop (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t stop_price = std::stoi(match[4]);
-        uint64_t quantity = std::stoi(match[5]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t stop_price = std::stoull(match[4]);
+            uint64_t quantity = std::stoull(match[5]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyStop(id, symbol_id, stop_price, quantity);
-        else if (match[1] == "sell")
-            order = Order::SellStop(id, symbol_id, stop_price, quantity);
-        else
-        {
-            std::cerr << "Invalid stop order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(stop_price);
+            if (!result) { std::cerr << "[SECURITY] Invalid stop price: " << stop_price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyStop(id, symbol_id, stop_price, quantity);
+            else if (match[1] == "sell")
+                order = Order::SellStop(id, symbol_id, stop_price, quantity);
+            else
+            {
+                std::cerr << "Invalid stop order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add stop' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add stop' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add stop' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add stop' command: " << command << std::endl;
 }
 
-void AddStopLimitOrder(MarketManager& market, const std::string& command)
+void AddStopLimitOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^add stop-limit (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t stop_price = std::stoi(match[4]);
-        uint64_t price = std::stoi(match[5]);
-        uint64_t quantity = std::stoi(match[6]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t stop_price = std::stoull(match[4]);
+            uint64_t price = std::stoull(match[5]);
+            uint64_t quantity = std::stoull(match[6]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::BuyStopLimit(id, symbol_id, stop_price, price, quantity);
-        else if (match[1] == "sell")
-            order = Order::SellStopLimit(id, symbol_id, stop_price, price, quantity);
-        else
-        {
-            std::cerr << "Invalid stop-limit order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(stop_price);
+            if (!result) { std::cerr << "[SECURITY] Invalid stop price: " << stop_price << std::endl; return; }
+            
+            result = Validator::ValidatePrice(price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::BuyStopLimit(id, symbol_id, stop_price, price, quantity);
+            else if (match[1] == "sell")
+                order = Order::SellStopLimit(id, symbol_id, stop_price, price, quantity);
+            else
+            {
+                std::cerr << "Invalid stop-limit order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add stop-limit' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add stop-limit' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add stop-limit' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add stop-limit' command: " << command << std::endl;
 }
 
-void AddTrailingStopOrder(MarketManager& market, const std::string& command)
+void AddTrailingStopOrder(SafeMarketManager& market, const std::string& command)
 {
-    static std::regex pattern("^add trailing stop (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+) (\\d+) (\\d+)$");
+    static std::regex pattern("^add trailing stop (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+) ([\\d-]+) ([\\d-]+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t stop_price = std::stoi(match[4]);
-        uint64_t quantity = std::stoi(match[5]);
-        int64_t trailing_distance = std::stoi(match[6]);
-        int64_t trailing_step = std::stoi(match[7]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t stop_price = std::stoull(match[4]);
+            uint64_t quantity = std::stoull(match[5]);
+            int64_t trailing_distance = std::stoll(match[6]);
+            int64_t trailing_step = std::stoll(match[7]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::TrailingBuyStop(id, symbol_id, stop_price, quantity, trailing_distance, trailing_step);
-        else if (match[1] == "sell")
-            order = Order::TrailingSellStop(id, symbol_id, stop_price, quantity, trailing_distance, trailing_step);
-        else
-        {
-            std::cerr << "Invalid stop order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(stop_price);
+            if (!result) { std::cerr << "[SECURITY] Invalid stop price: " << stop_price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+            
+            result = Validator::ValidateTrailingDistance(trailing_distance);
+            if (!result) { std::cerr << "[SECURITY] Invalid trailing distance: " << trailing_distance << std::endl; return; }
+            
+            result = Validator::ValidateTrailingStep(trailing_step);
+            if (!result) { std::cerr << "[SECURITY] Invalid trailing step: " << trailing_step << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::TrailingBuyStop(id, symbol_id, stop_price, quantity, trailing_distance, trailing_step);
+            else if (match[1] == "sell")
+                order = Order::TrailingSellStop(id, symbol_id, stop_price, quantity, trailing_distance, trailing_step);
+            else
+            {
+                std::cerr << "Invalid stop order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add trailing stop' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add trailing stop' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add trailing stop' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add trailing stop' command: " << command << std::endl;
 }
 
-void AddTrailingStopLimitOrder(MarketManager& market, const std::string& command)
+void AddTrailingStopLimitOrder(SafeMarketManager& market, const std::string& command)
 {
-    static std::regex pattern("^add trailing stop-limit (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+) (\\d+) (\\d+) (\\d+)$");
+    static std::regex pattern("^add trailing stop-limit (buy|sell) (\\d+) (\\d+) (\\d+) (\\d+) (\\d+) ([\\d-]+) ([\\d-]+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[2]);
-        uint32_t symbol_id = std::stoi(match[3]);
-        uint64_t stop_price = std::stoi(match[4]);
-        uint64_t price = std::stoi(match[5]);
-        uint64_t quantity = std::stoi(match[6]);
-        int64_t trailing_distance = std::stoi(match[7]);
-        int64_t trailing_step = std::stoi(match[8]);
+        try {
+            uint64_t id = std::stoull(match[2]);
+            uint32_t symbol_id = std::stoul(match[3]);
+            uint64_t stop_price = std::stoull(match[4]);
+            uint64_t price = std::stoull(match[5]);
+            uint64_t quantity = std::stoull(match[6]);
+            int64_t trailing_distance = std::stoll(match[7]);
+            int64_t trailing_step = std::stoll(match[8]);
 
-        Order order;
-        if (match[1] == "buy")
-            order = Order::TrailingBuyStopLimit(id, symbol_id, stop_price, price, quantity, trailing_distance, trailing_step);
-        else if (match[1] == "sell")
-            order = Order::TrailingSellStopLimit(id, symbol_id, stop_price, price, quantity, trailing_distance, trailing_step);
-        else
-        {
-            std::cerr << "Invalid stop-limit order side: " << match[1] << std::endl;
-            return;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateSymbolId(symbol_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid symbol ID: " << symbol_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(stop_price);
+            if (!result) { std::cerr << "[SECURITY] Invalid stop price: " << stop_price << std::endl; return; }
+            
+            result = Validator::ValidatePrice(price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
+            
+            result = Validator::ValidateTrailingDistance(trailing_distance);
+            if (!result) { std::cerr << "[SECURITY] Invalid trailing distance: " << trailing_distance << std::endl; return; }
+            
+            result = Validator::ValidateTrailingStep(trailing_step);
+            if (!result) { std::cerr << "[SECURITY] Invalid trailing step: " << trailing_step << std::endl; return; }
+
+            Order order;
+            if (match[1] == "buy")
+                order = Order::TrailingBuyStopLimit(id, symbol_id, stop_price, price, quantity, trailing_distance, trailing_step);
+            else if (match[1] == "sell")
+                order = Order::TrailingSellStopLimit(id, symbol_id, stop_price, price, quantity, trailing_distance, trailing_step);
+            else
+            {
+                std::cerr << "Invalid stop-limit order side: " << match[1] << std::endl;
+                return;
+            }
+
+            ErrorCode ec = market.SafeAddOrder(order);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'add trailing stop-limit' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'add trailing stop-limit' command format" << std::endl;
         }
-
-        ErrorCode result = market.AddOrder(order);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'add trailing stop-limit' command: " << result << std::endl;
-
         return;
     }
 
     std::cerr << "Invalid 'add trailing stop-limit' command: " << command << std::endl;
 }
 
-void ReduceOrder(MarketManager& market, const std::string& command)
+void ReduceOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^reduce order (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[1]);
-        uint64_t quantity = std::stoi(match[2]);
+        try {
+            uint64_t id = std::stoull(match[1]);
+            uint64_t quantity = std::stoull(match[2]);
 
-        ErrorCode result = market.ReduceOrder(id, quantity);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'reduce order' command: " << result << std::endl;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
 
+            ErrorCode ec = market.SafeReduceOrder(id, quantity);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'reduce order' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'reduce order' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'reduce order' command: " << command << std::endl;
 }
 
-void ModifyOrder(MarketManager& market, const std::string& command)
+void ModifyOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^modify order (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[1]);
-        uint64_t new_price = std::stoi(match[2]);
-        uint64_t new_quantity = std::stoi(match[3]);
+        try {
+            uint64_t id = std::stoull(match[1]);
+            uint64_t new_price = std::stoull(match[2]);
+            uint64_t new_quantity = std::stoull(match[3]);
 
-        ErrorCode result = market.ModifyOrder(id, new_price, new_quantity);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'modify order' command: " << result << std::endl;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(new_price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << new_price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(new_quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << new_quantity << std::endl; return; }
 
+            ErrorCode ec = market.SafeModifyOrder(id, new_price, new_quantity);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'modify order' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'modify order' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'modify order' command: " << command << std::endl;
 }
 
-void MitigateOrder(MarketManager& market, const std::string& command)
+void MitigateOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^mitigate order (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[1]);
-        uint64_t new_price = std::stoi(match[2]);
-        uint64_t new_quantity = std::stoi(match[3]);
+        try {
+            uint64_t id = std::stoull(match[1]);
+            uint64_t new_price = std::stoull(match[2]);
+            uint64_t new_quantity = std::stoull(match[3]);
 
-        ErrorCode result = market.MitigateOrder(id, new_price, new_quantity);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'mitigate order' command: " << result << std::endl;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(new_price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << new_price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(new_quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << new_quantity << std::endl; return; }
 
+            ErrorCode ec = market.SafeModifyOrder(id, new_price, new_quantity);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'mitigate order' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'mitigate order' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'mitigate order' command: " << command << std::endl;
 }
 
-void ReplaceOrder(MarketManager& market, const std::string& command)
+void ReplaceOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^replace order (\\d+) (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[1]);
-        uint64_t new_id = std::stoi(match[2]);
-        uint64_t new_price = std::stoi(match[3]);
-        uint64_t new_quantity = std::stoi(match[4]);
+        try {
+            uint64_t id = std::stoull(match[1]);
+            uint64_t new_id = std::stoull(match[2]);
+            uint64_t new_price = std::stoull(match[3]);
+            uint64_t new_quantity = std::stoull(match[4]);
 
-        ErrorCode result = market.ReplaceOrder(id, new_id, new_price, new_quantity);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'replace order' command: " << result << std::endl;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidateOrderId(new_id);
+            if (!result) { std::cerr << "[SECURITY] Invalid new order ID: " << new_id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(new_price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << new_price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(new_quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << new_quantity << std::endl; return; }
 
+            ErrorCode ec = market.SafeReplaceOrder(id, new_id, new_price, new_quantity);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'replace order' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'replace order' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'replace order' command: " << command << std::endl;
 }
 
-void DeleteOrder(MarketManager& market, const std::string& command)
+void DeleteOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^delete order (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[1]);
+        try {
+            uint64_t id = std::stoull(match[1]);
 
-        ErrorCode result = market.DeleteOrder(id);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'delete order' command: " << result << std::endl;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
 
+            ErrorCode ec = market.SafeDeleteOrder(id);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'delete order' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order ID value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'delete order' command format" << std::endl;
+        }
         return;
     }
 
     std::cerr << "Invalid 'delete order' command: " << command << std::endl;
 }
 
-void ExecuteOrder(MarketManager& market, const std::string& command)
+void ExecuteOrder(SafeMarketManager& market, const std::string& command)
 {
     static std::regex pattern("^execute order (\\d+) (\\d+) (\\d+)$");
     std::smatch match;
 
     if (std::regex_search(command, match, pattern))
     {
-        uint64_t id = std::stoi(match[1]);
-        uint64_t price = std::stoi(match[2]);
-        uint64_t quantity = std::stoi(match[3]);
+        try {
+            uint64_t id = std::stoull(match[1]);
+            uint64_t price = std::stoull(match[2]);
+            uint64_t quantity = std::stoull(match[3]);
 
-        ErrorCode result = (price == 0) ? market.ExecuteOrder(id, quantity) : market.ExecuteOrder(id, price, quantity);
-        if (result != ErrorCode::OK)
-            std::cerr << "Failed 'execute order' command: " << result << std::endl;
+            // Validate inputs
+            auto result = Validator::ValidateOrderId(id);
+            if (!result) { std::cerr << "[SECURITY] Invalid order ID: " << id << std::endl; return; }
+            
+            result = Validator::ValidatePrice(price);
+            if (!result) { std::cerr << "[SECURITY] Invalid price: " << price << std::endl; return; }
+            
+            result = Validator::ValidateQuantity(quantity);
+            if (!result) { std::cerr << "[SECURITY] Invalid quantity: " << quantity << std::endl; return; }
 
+            ErrorCode ec = (price == 0) ? market.GetManager().ExecuteOrder(id, quantity) : market.SafeExecuteOrder(id, price, quantity);
+            if (ec != ErrorCode::OK)
+                std::cerr << "Failed 'execute order' command: " << ec << std::endl;
+
+        } catch (const std::out_of_range&) {
+            std::cerr << "[SECURITY] Order parameter value out of range" << std::endl;
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Invalid 'execute order' command format" << std::endl;
+        }
         return;
     }
 
@@ -598,12 +951,23 @@ void ExecuteOrder(MarketManager& market, const std::string& command)
 int main(int argc, char** argv)
 {
     MyMarketHandler market_handler;
-    MarketManager market(market_handler);
+    SafeMarketManager market(market_handler);
+    
+    std::cout << "=== CppTrader Matching Engine (Security Hardened) ===" << std::endl;
+    std::cout << "Type 'help' for commands, 'exit' to quit" << std::endl;
+    std::cout << std::endl;
 
     // Perform text input
     std::string line;
     while (getline(std::cin, line))
     {
+        // Validate input line length
+        auto result = Validator::ValidateInputLine(line.c_str(), line.length());
+        if (!result) {
+            std::cerr << "[SECURITY] Input rejected: " << result.error_message << std::endl;
+            continue;
+        }
+
         if (line == "help")
         {
             std::cout << "Supported commands: " << std::endl;
@@ -633,9 +997,18 @@ int main(int argc, char** argv)
         else if ((line.find("#") == 0) || (line == ""))
             continue;
         else if (line == "enable matching")
-            market.EnableMatching();
+            market.GetManager().EnableMatching();
         else if (line == "disable matching")
-            market.DisableMatching();
+            market.GetManager().DisableMatching();
+        else if (line == "stats")
+        {
+            auto stats = market.GetStats();
+            std::cout << "=== Security Validation Statistics ===" << std::endl;
+            std::cout << "Symbols accepted/rejected: " << stats.symbols_accepted << "/" << stats.symbols_rejected << std::endl;
+            std::cout << "Order books accepted/rejected: " << stats.order_books_accepted << "/" << stats.order_books_rejected << std::endl;
+            std::cout << "Orders accepted/rejected: " << stats.orders_accepted << "/" << stats.orders_rejected << std::endl;
+            std::cout << "Security events: " << stats.security_events << std::endl;
+        }
         else if (line.find("add symbol") != std::string::npos)
             AddSymbol(market, line);
         else if (line.find("delete symbol") != std::string::npos)
@@ -678,6 +1051,13 @@ int main(int argc, char** argv)
             ExecuteOrder(market, line);
         else
             std::cerr << "Unknown command: "  << line << std::endl;
+    }
+
+    // Print final statistics
+    auto stats = market.GetStats();
+    if (stats.security_events > 0) {
+        std::cout << std::endl;
+        std::cout << "[SECURITY] Total security events detected: " << stats.security_events << std::endl;
     }
 
     return 0;
