@@ -49,19 +49,19 @@ list(APPEND LINKLIBS cpptrader)
 # Additional module components: benchmarks, examples, plugins, tests, tools and install
 if(NOT CPPTRADER_MODULE)
 
-  # Examples
-  file(GLOB EXAMPLE_HEADER_FILES "examples/*.h")
-  file(GLOB EXAMPLE_INLINE_FILES "examples/*.inl")
-  file(GLOB EXAMPLE_SOURCE_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/examples" "examples/*.cpp")
-  foreach(EXAMPLE_SOURCE_FILE ${EXAMPLE_SOURCE_FILES})
-    string(REGEX REPLACE "(.*)\\.cpp" "\\1" EXAMPLE_NAME ${EXAMPLE_SOURCE_FILE})
-    set(EXAMPLE_TARGET "cpptrader-example-${EXAMPLE_NAME}")
-    add_executable(${EXAMPLE_TARGET} ${EXAMPLE_HEADER_FILES} ${EXAMPLE_INLINE_FILES} "examples/${EXAMPLE_SOURCE_FILE}")
-    set_target_properties(${EXAMPLE_TARGET} PROPERTIES COMPILE_FLAGS "${PEDANTIC_COMPILE_FLAGS}" FOLDER "examples")
-    target_link_libraries(${EXAMPLE_TARGET} ${LINKLIBS})
-    list(APPEND INSTALL_TARGETS ${EXAMPLE_TARGET})
-    list(APPEND INSTALL_TARGETS_PDB ${EXAMPLE_TARGET})
-  endforeach()
+# Applications
+file(GLOB APP_HEADER_FILES "app/*.h")
+file(GLOB APP_INLINE_FILES "app/*.inl")
+file(GLOB APP_SOURCE_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/app" "app/*.cpp")
+foreach(APP_SOURCE_FILE ${APP_SOURCE_FILES})
+  string(REGEX REPLACE "(.*)\\.cpp" "\\1" APP_NAME ${APP_SOURCE_FILE})
+  set(APP_TARGET "cpptrader-app-${APP_NAME}")
+  add_executable(${APP_TARGET} ${APP_HEADER_FILES} ${APP_INLINE_FILES} "app/${APP_SOURCE_FILE}")
+  set_target_properties(${APP_TARGET} PROPERTIES COMPILE_FLAGS "${PEDANTIC_COMPILE_FLAGS}" FOLDER "app")
+  target_link_libraries(${APP_TARGET} ${LINKLIBS})
+  list(APPEND INSTALL_TARGETS ${APP_TARGET})
+  list(APPEND INSTALL_TARGETS_PDB ${APP_TARGET})
+endforeach()
 
   # Benchmarks
   file(GLOB BENCHMARK_HEADER_FILES "performance/*.h")
