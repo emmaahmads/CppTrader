@@ -85,10 +85,14 @@ namespace ITCHMessageTypes {
     constexpr char LULD_AUCTION_COLLAR = 'J';
 }
 
-// Security-hardened ITCH handler wrapper
+// Security-hardened ITCH handler wrapper/decorator
 // Validates message sizes before delegating to vendor ITCHHandler
 class SafeITCHHandler {
 public:
+    // Wraps an existing ITCHHandler with validation - takes a reference (alias) to the
+    // original handler so we can monitor/protect it without copying. The : _handler(handler)
+    // part initializes our internal reference to point to the handler passed in.
+	// _handler(handler) 1 member 1 parameter (another handler by reference --no copy)
     SafeITCHHandler(ITCH::ITCHHandler& handler) : _handler(handler) {}
     
     // TODO: Use std::span<std::byte> or std::byte* instead of void* for type safety
@@ -170,6 +174,7 @@ public:
     }
 
 private:
+    // The constructor receives a handler and stores its reference so the wrapper can call it later.
     ITCH::ITCHHandler& _handler;
     // TODO: Use std::string_view or static const char* pool instead of raw pointer
     const char* _last_error = nullptr;
